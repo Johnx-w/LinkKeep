@@ -1,0 +1,26 @@
+[
+  {
+    "id": "douyin-01",
+    "platform": "douyin",
+    "input": "REPLACE_WITH_YOUR_AUTHORIZED_PUBLIC_SHARE_LINK",
+    "authorization": "owned-by-operator",
+    "expected": {
+      "kind": "video",
+      "minimumMediaCount": 1,
+      "allowPlatformDistribution": true
+    },
+    "lastConfirmedPublicAt": "2026-07-27T00:00:00.000Z"
+  },
+  {
+    "id": "xiaohongshu-01",
+    "platform": "xiaohongshu",
+    "input": "REPLACE_WITH_YOUR_AUTHORIZED_PUBLIC_SHARE_LINK",
+    "authorization": "owned-by-operator",
+    "expected": {
+      "kind": "image",
+      "minimumMediaCount": 1,
+      "allowPlatformDistribution": true
+    },
+    "lastConfirmedPublicAt": "2026-07-27T00:00:00.000Z"
+  }
+]

@@ -1,0 +1,104 @@
+export const locales = ["zh", "en"] as const;
+export type Locale = (typeof locales)[number];
+
+export function isLocale(value: string): value is Locale {
+  return locales.includes(value as Locale);
+}
+
+export const messages = {
+  zh: {
+    brandSubtitle: "公开媒体保存工具",
+    heroEyebrow: "抖音 · 小红书",
+    heroTitle: "无水印原图解析下载多个平台视频/图片",
+    heroDescription:
+      "粘贴分享链接，查看平台公开提供的图片和视频版本。无需注册，免费不限次数。",
+    inputLabel: "分享链接或分享文本",
+    inputPlaceholder: "粘贴带链接的文本",
+    parse: "开始解析",
+    parsing: "正在解析",
+    paste: "粘贴",
+    clear: "清空",
+    supported: "收藏本站快速访问：按下 Ctrl + D（Mac 上 Command + D）",
+    quality: "最高公开质量",
+    ephemeral: "15 分钟临时结果",
+    private: "不保存下载历史",
+    source: "查看原帖",
+    selectAll: "全选",
+    downloadSelected: "下载所选",
+    download: "下载",
+    preview: "预览",
+    resultTitle: "可保存媒体",
+    noWatermarkUnknown: "平台未声明水印状态",
+    cleanSource: "公开干净源",
+    platformVersion: "平台分发版",
+    directDisclosure:
+      "默认经本站代理下载（带平台 Referer，避免 CDN 防盗链 403）。直连备用可能被平台拒绝。",
+    footerRights:
+      "相关媒体权利归相应权利人所有。本站不长期保存媒体；为完成传输可能临时处理或缓存，并在 15 分钟内删除。",
+    terms: "服务条款",
+    privacy: "隐私政策",
+    copyright: "版权投诉",
+    failed: "暂时无法解析该链接",
+    retry: "请确认内容公开且无需登录，或稍后重试。",
+    multiple: "一次只能解析一个分享链接。",
+    unsupported: "目前只支持抖音和小红书官方链接。",
+    restricted: "该内容需要登录、权限或已不可公开访问。",
+    rateLimited: "免费额度已用完，请稍后再试。",
+    platformDisabled: "该平台暂时不可用，另一个平台仍可正常使用。",
+    timeout: "平台响应超时，请稍后重试。",
+    mediaTooLarge: "该媒体超过免费版大小限制。",
+    proxyUnavailable: "代理流量预算已用完，请尝试直连备用。",
+    downloadFailed: "下载未能启动，请稍后重试。",
+    proxy: "直连备用",
+    zipPreparing: "正在本机生成 ZIP",
+  },
+  en: {
+    brandSubtitle: "Public media saver",
+    heroEyebrow: "Douyin · REDnote",
+    heroTitle: "Parse & download watermark-free videos/images from multiple platforms",
+    heroDescription:
+      "Paste a share link to view publicly available images and videos. No sign-up — free and unlimited.",
+    inputLabel: "Share link or share text",
+    inputPlaceholder: "Paste text that contains a link",
+    parse: "Parse link",
+    parsing: "Parsing",
+    paste: "Paste",
+    clear: "Clear",
+    supported: "Bookmark this site for quick access: press Ctrl + D (Command + D on Mac)",
+    quality: "Highest public quality",
+    ephemeral: "15-minute temporary result",
+    private: "No download history",
+    source: "Open source post",
+    selectAll: "Select all",
+    downloadSelected: "Download selected",
+    download: "Download",
+    preview: "Preview",
+    resultTitle: "Available media",
+    noWatermarkUnknown: "Watermark status not declared",
+    cleanSource: "Public clean source",
+    platformVersion: "Platform distribution",
+    directDisclosure:
+      "Downloads default to a short-lived server proxy with the platform Referer, avoiding CDN hotlink 403s. Direct fallback may be blocked.",
+    footerRights:
+      "Media rights belong to their respective owners. We do not retain media long term; temporary processing or caching is deleted within 15 minutes.",
+    terms: "Terms",
+    privacy: "Privacy",
+    copyright: "Copyright",
+    failed: "We could not parse this link",
+    retry:
+      "Confirm the post is public without login, or try again later.",
+    multiple: "Only one share link can be parsed at a time.",
+    unsupported: "Only official Douyin and REDnote links are supported.",
+    restricted: "This content requires access or is no longer public.",
+    rateLimited: "The free allowance is exhausted. Please try later.",
+    platformDisabled:
+      "This platform is temporarily unavailable; the other remains online.",
+    timeout: "The platform timed out. Please try later.",
+    mediaTooLarge: "This media exceeds the free size limit.",
+    proxyUnavailable:
+      "The proxy budget is exhausted. Try the direct fallback.",
+    downloadFailed: "The download did not start. Please try again.",
+    proxy: "Direct fallback",
+    zipPreparing: "Creating ZIP on this device",
+  },
+} as const;

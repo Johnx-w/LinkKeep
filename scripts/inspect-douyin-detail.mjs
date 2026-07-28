@@ -1,0 +1,62 @@
+import { chromium } from "playwright-core";
+import { writeFile } from "node:fs/promises";
+
+const chrome =
+  process.env.PLAYWRIGHT_EXECUTABLE_PATH ||
+  "C:\\Users\\Johnson\\AppData\\Local\\ms-playwright\\chromium-1228\\chrome-win64\\chrome.exe";
+
+const browser = await chromium.launch({
+  executablePath: chrome,
+  headless: true,
+  args: ["--disable-dev-shm-usage", "--no-first-run"],
+});
+
+try {
+  const context = await browser.newContext({
+    locale: "zh-CN",
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  });
+  const page = await context.newPage();
+  let detail = null;
+  page.on("response", async (response) => {
+    if (!response.url().includes("/aweme/v1/web/aweme/detail/")) return;
+    if (detail) return;
+    try {
+      detail = await response.json();
+    } catch {
+      // ignore
+    }
+  });
+  await page.goto(
+    "https://www.douyin.com/video/7664631087289065189?previous_page=web_code_link",
+    { waitUntil: "domcontentloaded", timeout: 30000 },
+  );
+  await page.waitForTimeout(8000);
+  await writeFile(
+    "artifacts/validation/douyin-aweme-detail.json",
+    JSON.stringify(detail, null, 2),
+  );
+  const aweme = detail?.aweme_detail;
+  console.log(
+    JSON.stringify(
+      {
+        has: Boolean(aweme),
+        desc: aweme?.desc?.slice?.(0, 80),
+        author: aweme?.author?.nickname,
+        play: aweme?.video?.play_addr?.url_list?.slice?.(0, 2),
+        download: aweme?.video?.download_addr?.url_list?.slice?.(0, 2),
+        bitRates: aweme?.video?.bit_rate?.map?.((item) => ({
+          gear: item.gear_name,
+          br: item.bit_rate,
+          urls: item.play_addr?.url_list?.slice?.(0, 1),
+        })),
+        images: aweme?.images?.length,
+      },
+      null,
+      2,
+    ),
+  );
+} finally {
+  await browser.close();
+}

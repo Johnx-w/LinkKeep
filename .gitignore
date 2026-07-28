@@ -1,0 +1,16 @@
+node_modules/
+.next/
+coverage/
+artifacts/
+.env
+.env.local
+.private/*
+!.private/authorized-samples.example.json
+data/
+backups/
+*.db
+*.db-shm
+*.db-wal
+npm-debug.log*
+.cursor/
+tsconfig.tsbuildinfo
