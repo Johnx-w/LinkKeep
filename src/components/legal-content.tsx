@@ -17,7 +17,7 @@ const content = {
         ],
         [
           "禁止行为",
-          "不得批量或自动化滥用服务，不得侵犯知识产权、隐私或其他合法权益，不得攻击、探测、规避限额或利用本服务访问受限内容。",
+          "不得批量或自动化滥用服务，不得侵犯知识产权、隐私或其他合法权益，不得攻击、探测或利用本服务访问受限内容。",
         ],
         [
           "临时处理",
@@ -25,7 +25,7 @@ const content = {
         ],
         [
           "服务变化",
-          "来源平台变化可能导致部分能力中断。我们可为保护安全、预算和权利人权益而限流、熔断平台、拒绝指定帖子或停止服务。",
+          "来源平台变化可能导致部分能力中断。我们可为保护安全、预算和权利人权益而熔断平台、拒绝指定帖子或停止服务。",
         ],
         [
           "平台关系",
@@ -41,8 +41,8 @@ const content = {
           "分享输入仅用于当次解析；完整分享文本和完整媒体 URL 不写入业务日志。媒体和结果最长保留 15 分钟。",
         ],
         [
-          "限流与日志",
-          "原始 IP 仅在内存中生成每日轮换的不可逆限流标识。诊断日志保留 7 天，聚合指标保留 30 天，不用于长期用户画像。",
+          "日志与留存",
+          "诊断日志保留 7 天，聚合指标保留 30 天，不用于长期用户画像。",
         ],
         [
           "直连下载",
@@ -73,7 +73,7 @@ const content = {
         ],
         [
           "Prohibited use",
-          "Do not automate or abuse the service, infringe intellectual property or privacy, attack or probe the service, evade limits, or use it to access restricted content.",
+          "Do not automate or abuse the service, infringe intellectual property or privacy, attack or probe the service, or use it to access restricted content.",
         ],
         [
           "Temporary processing",
@@ -81,7 +81,7 @@ const content = {
         ],
         [
           "Service changes",
-          "Source-platform changes can interrupt features. We may rate-limit, disable a platform, reject a specific post, or suspend service to protect security, budget, and rights holders.",
+          "Source-platform changes can interrupt features. We may disable a platform, reject a specific post, or suspend service to protect security, budget, and rights holders.",
         ],
         [
           "No affiliation",
@@ -97,8 +97,8 @@ const content = {
           "Share input is used only for the current parse. Complete share text and media URLs are not written to business logs. Media and results expire within 15 minutes.",
         ],
         [
-          "Rate limits and logs",
-          "A raw IP is used in memory only to create a daily rotating irreversible limit identifier. Diagnostic logs last 7 days and aggregate metrics 30 days; neither creates a long-term visitor profile.",
+          "Logs and retention",
+          "Diagnostic logs last 7 days and aggregate metrics 30 days; neither creates a long-term visitor profile.",
         ],
         [
           "Direct downloads",

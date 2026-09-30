@@ -21,9 +21,9 @@ const errorKey: Record<string, keyof (typeof messages)["zh"]> = {
   CONTENT_RESTRICTED: "restricted",
   CONTENT_UNAVAILABLE: "restricted",
   CONTENT_BLOCKED: "restricted",
-  RATE_LIMITED: "rateLimited",
   PLATFORM_DISABLED: "platformDisabled",
   PARSE_TIMEOUT: "timeout",
+  DOWNLOAD_FAILED: "downloadFailed",
 };
 
 function bytes(value: number | undefined, locale: Locale): string {
@@ -128,7 +128,21 @@ export function Downloader({ locale }: { locale: Locale }) {
     "idle" | "parsing" | "slow" | "zipping"
   >("idle");
   const [error, setError] = useState<{ code: string; requestId?: string }>();
+  const [downloading, setDownloading] = useState<Set<string>>(new Set());
   const sequence = useRef(0);
+
+  function downloadKey(item: PublicMediaItem, mode: "proxy" | "direct") {
+    return `${item.id}:${mode}`;
+  }
+
+  function setItemDownloading(key: string, loading: boolean) {
+    setDownloading((prev) => {
+      const next = new Set(prev);
+      if (loading) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
 
   const selectedItems = useMemo(
     () => result?.media.filter((item) => selected.has(item.id)) ?? [],
@@ -186,23 +200,33 @@ export function Downloader({ locale }: { locale: Locale }) {
   }
 
   async function proxyDownload(item: PublicMediaItem) {
-    const response = await fetch(
-      `/api/media/${encodeURIComponent(item.token)}?mode=proxy`,
-    );
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      setError({ code: payload.error ?? "PARSE_FAILED" });
-      return;
+    const key = downloadKey(item, "proxy");
+    if (downloading.has(key)) return;
+    setItemDownloading(key, true);
+    setError(undefined);
+    try {
+      const response = await fetch(
+        `/api/media/${encodeURIComponent(item.token)}?mode=proxy`,
+      );
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setError({ code: payload.error ?? "DOWNLOAD_FAILED" });
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = result ? localFilename(result, item) : "media";
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch {
+      setError({ code: "DOWNLOAD_FAILED" });
+    } finally {
+      setItemDownloading(key, false);
     }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = result ? localFilename(result, item) : "media";
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
 
   async function downloadSelected() {
@@ -277,6 +301,33 @@ export function Downloader({ locale }: { locale: Locale }) {
             : "failed")
     ];
 
+  const featureCards = [
+    {
+      tone: "pink",
+      title: text.featureFreeTitle,
+      body: text.featureFreeBody,
+      path: "M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z",
+    },
+    {
+      tone: "blue",
+      title: text.featureNoAccountTitle,
+      body: text.featureNoAccountBody,
+      path: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
+    },
+    {
+      tone: "purple",
+      title: text.featureWatermarkTitle,
+      body: text.featureWatermarkBody,
+      path: "M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z",
+    },
+    {
+      tone: "green",
+      title: text.featureSpeedTitle,
+      body: text.featureSpeedBody,
+      path: "M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z",
+    },
+  ];
+
   return (
     <>
       <section className="hero">
@@ -339,10 +390,34 @@ export function Downloader({ locale }: { locale: Locale }) {
             </div>
           )}
         </div>
-        <div className="trust-row" aria-label="Product limits">
-          <span>{text.quality}</span>
-          <span>{text.ephemeral}</span>
-          <span>{text.private}</span>
+        <div
+          className="feature-grid"
+          aria-label={locale === "zh" ? "产品特性" : "Product features"}
+        >
+          {featureCards.map((card) => (
+            <article className="feature-card" key={card.title}>
+              <span className={`feature-icon feature-icon--${card.tone}`}>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                  width={32}
+                  height={32}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d={card.path}
+                  />
+                </svg>
+              </span>
+              <h3 className="feature-title">{card.title}</h3>
+              <p className="feature-body">{card.body}</p>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -425,8 +500,15 @@ export function Downloader({ locale }: { locale: Locale }) {
                   </span>
                 </div>
                 <div className="media-actions">
-                  <button type="button" onClick={() => proxyDownload(item)}>
-                    {text.download}
+                  <button
+                    type="button"
+                    disabled={downloading.has(downloadKey(item, "proxy"))}
+                    aria-busy={downloading.has(downloadKey(item, "proxy"))}
+                    onClick={() => proxyDownload(item)}
+                  >
+                    {downloading.has(downloadKey(item, "proxy"))
+                      ? text.downloading
+                      : text.download}
                   </button>
                   <button type="button" onClick={() => directDownload(item)}>
                     {text.proxy}

@@ -7,7 +7,6 @@ test("访客可以解析并选择公开媒体", async ({ page }) => {
       contentType: "application/json",
       body: JSON.stringify({
         requestId: "req_e2e",
-        limit: { allowed: true, hourlyRemaining: 4, dailyRemaining: 19 },
         result: {
           platform: "xiaohongshu",
           postId: "65aabbccddeeff0011223344",

@@ -2,13 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { DomainError } from "@/domain/errors";
-import {
-  getParseRateLimiter,
-  getParseService,
-} from "@/application/services";
-import { env } from "@/config/env";
-import { clientIp } from "@/security/client-ip";
-import { createLimitIdentifier } from "@/security/rate-limit";
+import { getParseService } from "@/application/services";
 import { getStore } from "@/storage/server-store";
 
 export const runtime = "nodejs";
@@ -30,9 +24,6 @@ function statusFor(error: DomainError): number {
       return 422;
     case "CONTENT_BLOCKED":
       return 451;
-    case "RATE_LIMITED":
-    case "RISK_CHALLENGE_REQUIRED":
-      return 429;
     case "PLATFORM_DISABLED":
       return 503;
     case "PARSE_TIMEOUT":
@@ -53,39 +44,6 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const now = new Date();
-  const validationRequest =
-    Boolean(env.VALIDATION_TOKEN) &&
-    request.headers.get("x-validation-token") === env.VALIDATION_TOKEN;
-  const identifier = createLimitIdentifier(
-    clientIp(request),
-    now,
-    env.DAILY_ID_SECRET,
-  );
-  const limit = validationRequest
-    ? {
-        allowed: true,
-        hourlyRemaining: 0,
-        dailyRemaining: 0,
-        reason: undefined,
-        retryAfterSeconds: undefined,
-      }
-    : getParseRateLimiter().consume(identifier, now);
-  if (!limit.allowed) {
-    return Response.json(
-      {
-        error: "RATE_LIMITED",
-        reason: limit.reason,
-        retryAfterSeconds: limit.retryAfterSeconds,
-        requestId,
-      },
-      {
-        status: 429,
-        headers: {
-          "retry-after": String(limit.retryAfterSeconds ?? 3600),
-        },
-      },
-    );
-  }
 
   try {
     const result = await (await getParseService()).parse(parsedBody.data.input, {
@@ -98,7 +56,7 @@ export async function POST(request: Request): Promise<Response> {
       "parse_success",
     );
     return Response.json(
-      { result, requestId, limit },
+      { result, requestId },
       {
         headers: {
           "cache-control": "no-store",

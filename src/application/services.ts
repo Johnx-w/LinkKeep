@@ -15,12 +15,10 @@ import {
   standardBrowserRenderer,
 } from "@/platforms/public-page-loader";
 import { resolveChromiumPath } from "@/platforms/chromium-path";
-import { MemoryParseRateLimiter } from "@/security/rate-limit";
 import { getStore } from "@/storage/server-store";
 
 declare global {
   var __linkKeepParseService: ParseService | undefined;
-  var __linkKeepRateLimiter: MemoryParseRateLimiter | undefined;
   var __linkKeepParseServicePromise: Promise<ParseService> | undefined;
 }
 
@@ -64,12 +62,4 @@ export async function getParseService(): Promise<ParseService> {
     return globalThis.__linkKeepParseService;
   })();
   return globalThis.__linkKeepParseServicePromise;
-}
-
-export function getParseRateLimiter(): MemoryParseRateLimiter {
-  globalThis.__linkKeepRateLimiter ??= new MemoryParseRateLimiter({
-    hourly: 5,
-    daily: 20,
-  });
-  return globalThis.__linkKeepRateLimiter;
 }
