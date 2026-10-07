@@ -8,6 +8,7 @@ import type {
   ShareEntry,
 } from "@/domain/media";
 import type { SupportedPlatform } from "@/domain/share-input";
+import { readPageState } from "@/platforms/page-state";
 
 export interface PublicPage {
   finalUrl: string;
@@ -24,6 +25,8 @@ interface ExtractedMedia {
   url: string;
   width?: number;
   height?: number;
+  sizeBytes?: number;
+  codec?: string;
   mimeType?: string;
   thumbnailUrl?: string;
   durationSeconds?: number;
@@ -129,28 +132,18 @@ function openGraphEntry(html: string): ExtractedEntry {
   };
 }
 
-function xiaohongshuStateEntry(html: string): ExtractedEntry | null {
-  const match = html.match(
-    /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*(?:<\/script>|;)/u,
-  );
-  if (!match) return null;
-
-  let state: Record<string, unknown>;
-  try {
-    state = JSON.parse(match[1].replaceAll("undefined", "null")) as Record<
-      string,
-      unknown
-    >;
-  } catch {
-    return null;
-  }
-
-  const noteRoot = state.note as Record<string, unknown> | undefined;
+function xiaohongshuStateEntry(html: string, expectedPostId?: string): ExtractedEntry | null {
+  const state = readPageState(html, "__INITIAL_STATE__") as Record<string, unknown> | undefined;
+  const mobileState = readPageState(html, "__SETUP_SERVER_STATE__") as { LAUNCHER_SSR_STORE_PAGE_DATA?: { noteData?: Record<string, unknown> } } | undefined;
+  const noteRoot = state?.note as Record<string, unknown> | undefined;
   const detailMap = noteRoot?.noteDetailMap as
     | Record<string, { note?: Record<string, unknown> }>
     | undefined;
-  const first = detailMap ? Object.values(detailMap)[0]?.note : undefined;
+  const first = (expectedPostId ? detailMap?.[expectedPostId]?.note : undefined) ??
+    (detailMap ? Object.values(detailMap).find((entry) => !expectedPostId || entry.note?.noteId === expectedPostId)?.note : undefined) ??
+    mobileState?.LAUNCHER_SSR_STORE_PAGE_DATA?.noteData;
   if (!first) return null;
+  if (expectedPostId && first.noteId && first.noteId !== expectedPostId) return null;
 
   const title = shortText(first.title) ?? shortText(first.desc);
   const user = first.user as Record<string, unknown> | undefined;
@@ -163,9 +156,9 @@ function xiaohongshuStateEntry(html: string): ExtractedEntry | null {
     const consumer = video.consumer as Record<string, unknown> | undefined;
     const mediaInfo = video.media as Record<string, unknown> | undefined;
     const stream = mediaInfo?.stream as Record<string, unknown> | undefined;
-    const h264 = Array.isArray(stream?.h264) ? stream.h264 : [];
-    const h265 = Array.isArray(stream?.h265) ? stream.h265 : [];
-    const candidates = [...h264, ...h265] as Record<string, unknown>[];
+    const candidates = Object.entries(stream ?? {}).flatMap(([codec, entries]) =>
+      ["h264", "h265", "h266", "av1"].includes(codec) && Array.isArray(entries)
+        ? entries.filter((entry) => entry && publicHttpsUrl(entry.masterUrl)).map((entry) => ({ ...entry, codec }) as Record<string, unknown>) : []);
     candidates.sort((left, right) => compareVideoCandidate(right, left));
     const best = candidates[0];
     const masterUrl =
@@ -178,6 +171,8 @@ function xiaohongshuStateEntry(html: string): ExtractedEntry | null {
         url: masterUrl,
         width: Number(best?.width) || undefined,
         height: Number(best?.height) || undefined,
+        sizeBytes: Number(best?.size ?? best?.dataSize) || undefined,
+        codec: shortText(best?.codec),
         durationSeconds: Number(video.duration) || undefined,
         mimeType: "video/mp4",
         thumbnailUrl: publicHttpsUrl(
@@ -527,7 +522,7 @@ function pickXiaohongshuPreviewUrl(
   );
 }
 
-function douyinAwemeEntry(html: string): ExtractedEntry | null {
+function douyinAwemeEntry(html: string, expectedPostId?: string): ExtractedEntry | null {
   const match = html.match(
     /<script[^>]*id="LINKKEEP_AWEME_DETAIL"[^>]*>([\s\S]*?)<\/script>/iu,
   );
@@ -535,19 +530,31 @@ function douyinAwemeEntry(html: string): ExtractedEntry | null {
 
   try {
     const aweme = JSON.parse(match[1]) as Record<string, unknown>;
+    const id = aweme.aweme_id ?? aweme.awemeId;
+    if (expectedPostId && id && String(id) !== expectedPostId) return null;
     const author = aweme.author as Record<string, unknown> | undefined;
     const video = aweme.video as Record<string, unknown> | undefined;
     const media: ExtractedMedia[] = [];
 
-    const downloadUrl = firstUrlList(video?.download_addr);
-    const bitRates = Array.isArray(video?.bit_rate)
-      ? ([...video.bit_rate] as Record<string, unknown>[])
+    const downloadAddress = video?.download_addr ?? video?.downloadAddr;
+    const playAddress = video?.play_addr ?? video?.playAddr;
+    const downloadUrl = firstUrlList(downloadAddress);
+    const rates = video?.bit_rate ?? video?.bitRate;
+    const bitRates = Array.isArray(rates)
+      ? ([...rates] as Record<string, unknown>[])
       : [];
+    for (const address of [playAddress, video?.play_addr_h264, video?.play_addr_265, downloadAddress]) {
+      if (address && playAddrMeta(address).url) bitRates.push({ play_addr: address });
+    }
+    // Compare every public source, including the default play address. A lower
+    // bitrate-list entry must not outrank a higher-resolution default source.
+    const playable = bitRates.filter((candidate) => playAddrMeta(candidate.play_addr ?? candidate.playAddr).url);
+    bitRates.splice(0, bitRates.length, ...playable);
     bitRates.sort((left, right) => compareVideoCandidate(right, left));
     const bestBitRate = bitRates[0];
-    const bestPlay = playAddrMeta(bestBitRate?.play_addr);
+    const bestPlay = playAddrMeta(bestBitRate?.play_addr ?? bestBitRate?.playAddr);
     const highestQualityUrl = bestPlay.url;
-    const playMeta = playAddrMeta(video?.play_addr);
+    const playMeta = playAddrMeta(playAddress);
     const playUrl = playMeta.url;
     // Prefer the highest public resolution/playable gear. download_addr is often
     // a lower-resolution watermark=0 variant and must not win by default.
@@ -587,6 +594,8 @@ function douyinAwemeEntry(html: string): ExtractedEntry | null {
         mimeType: "video/mp4",
         width: chosenWidth || undefined,
         height: chosenHeight || undefined,
+        sizeBytes: bestPlay.dataSize || undefined,
+        codec: shortText(bestBitRate?.codec_type ?? bestBitRate?.codecType),
         durationSeconds:
           typeof video?.duration === "number"
             ? video.duration / 1000
@@ -639,8 +648,35 @@ function douyinAwemeEntry(html: string): ExtractedEntry | null {
   }
 }
 
-function douyinRenderEntry(html: string): ExtractedEntry | null {
-  return douyinAwemeEntry(html);
+function douyinRenderEntry(html: string, postId?: string): ExtractedEntry | null {
+  const captured = douyinAwemeEntry(html, postId);
+  if (captured) return captured;
+  const $ = cheerio.load(html);
+  const raw = $("script#RENDER_DATA").text();
+  const states: unknown[] = [];
+  if (raw) {
+    try { states.push(JSON.parse(decodeURIComponent(raw))); } catch { /* Ignore malformed hydration. */ }
+  }
+  for (const name of ["_ROUTER_DATA", "__SSR_HYDRATED_DATA__"]) {
+    const state = readPageState(html, name);
+    if (state) states.push(state);
+  }
+  const stack = states.map((value) => ({ value, depth: 0 }));
+  let inspected = 0;
+  while (stack.length && inspected++ < 20_000) {
+    const { value, depth } = stack.pop()!;
+    if (!value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    if ((record.aweme_id || record.awemeId) && (!postId || String(record.aweme_id ?? record.awemeId) === postId) && (record.video || record.images)) {
+      const payload = JSON.stringify(record).replaceAll("</", "<\\/");
+      const entry = douyinAwemeEntry(`<script id="LINKKEEP_AWEME_DETAIL">${payload}</script>`, postId);
+      if (entry) return entry;
+    }
+    if (depth < 12) for (const child of Object.values(record)) {
+      if (child && typeof child === "object") stack.push({ value: child, depth: depth + 1 });
+    }
+  }
+  return null;
 }
 
 abstract class PublicMetadataAdapter implements PlatformAdapter {
@@ -652,9 +688,7 @@ abstract class PublicMetadataAdapter implements PlatformAdapter {
     return postIdFor(this.platform, url) !== null;
   }
 
-  protected extract(html: string): ExtractedEntry {
-    return openGraphEntry(html);
-  }
+  protected abstract extract(html: string, postId?: string): ExtractedEntry;
 
   async parse(url: URL, context: ParseContext): Promise<ShareEntry> {
     const page = await this.loadPage(url, context.signal);
@@ -664,7 +698,7 @@ abstract class PublicMetadataAdapter implements PlatformAdapter {
       throw new DomainError("CONTENT_UNAVAILABLE");
     }
 
-    const extracted = this.extract(page.html);
+    const extracted = this.extract(page.html, postId);
     if (extracted.media.length === 0) {
       throw new DomainError("PARSE_FAILED", "PARSE_FAILED", true);
     }
@@ -678,6 +712,8 @@ abstract class PublicMetadataAdapter implements PlatformAdapter {
         mimeType: item.mimeType,
         width: item.width,
         height: item.height,
+        sizeBytes: item.sizeBytes,
+        codec: item.codec,
         quality: item.quality ?? "platform-distribution",
         cleanSource: item.cleanSource ?? null,
       },
@@ -702,15 +738,15 @@ abstract class PublicMetadataAdapter implements PlatformAdapter {
 export class DouyinPublicAdapter extends PublicMetadataAdapter {
   readonly platform = "douyin" as const;
 
-  protected override extract(html: string): ExtractedEntry {
-    return douyinRenderEntry(html) ?? openGraphEntry(html);
+  protected override extract(html: string, postId?: string): ExtractedEntry {
+    return douyinRenderEntry(html, postId) ?? openGraphEntry(html);
   }
 }
 
 export class XiaohongshuPublicAdapter extends PublicMetadataAdapter {
   readonly platform = "xiaohongshu" as const;
 
-  protected override extract(html: string): ExtractedEntry {
-    return xiaohongshuStateEntry(html) ?? openGraphEntry(html);
+  protected override extract(html: string, postId?: string): ExtractedEntry {
+    return xiaohongshuStateEntry(html, postId) ?? openGraphEntry(html);
   }
 }

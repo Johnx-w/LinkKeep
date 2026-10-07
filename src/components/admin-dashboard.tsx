@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import type { Feedback } from "@/storage/store";
 
 export interface DashboardData {
   csrf: string;
+  feedback: Feedback[];
   platforms: {
     platform: "douyin" | "xiaohongshu";
     enabled: boolean;
@@ -63,7 +65,7 @@ export function AdminDashboard({
   }
 
   async function logout() {
-    await fetch("/api/admin/session", { method: "DELETE" });
+    await fetch("/api/admin/session", { method: "DELETE", headers: { "x-csrf-token": data.csrf } });
     window.location.reload();
   }
 
@@ -148,6 +150,26 @@ export function AdminDashboard({
                 }
               >
                 解除
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h2>问题反馈</h2>
+        {data.feedback.length === 0 && <p>暂无待处理反馈。</p>}
+        <ul className="admin-list admin-feedback">
+          {data.feedback.map((feedback) => (
+            <li key={feedback.id}>
+              <div>
+                <strong>#{feedback.id} · {feedback.createdAt}</strong>
+                <p>{feedback.message}</p>
+                {feedback.problemUrl && <p>问题链接：{feedback.problemUrl}</p>}
+                {feedback.contactEmail && <p>联系邮箱：{feedback.contactEmail}</p>}
+              </div>
+              <button type="button" onClick={() => action({ action: "resolve-feedback", feedbackId: feedback.id })}>
+                标记已处理
               </button>
             </li>
           ))}

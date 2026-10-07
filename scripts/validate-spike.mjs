@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { verifyDownloadStart } from "./download-check.mjs";
 
 const samples = JSON.parse(
   await readFile(".private/spike-samples.json", "utf8"),
@@ -15,6 +16,7 @@ for (const sample of samples) {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      origin: new URL(origin).origin,
       "x-validation-token": validationToken,
     },
     body: JSON.stringify({ input: sample.input }),
@@ -30,15 +32,8 @@ for (const sample of samples) {
   let downloadStarted = false;
   let downloadError = null;
   if (parsePassed) {
-    const checks = await Promise.all(
-      result.media.slice(0, 3).map(async (item) => {
-        const mediaResponse = await fetch(
-          `${origin}/api/media/${encodeURIComponent(item.token)}?mode=direct`,
-          { redirect: "manual" },
-        );
-        return mediaResponse.status === 307;
-      }),
-    );
+    const checks = [];
+    for (const item of result.media) checks.push(await verifyDownloadStart(origin, item, "proxy"));
     downloadStarted = checks.every(Boolean);
     if (!downloadStarted) downloadError = "DIRECT_REDIRECT_FAILED";
   }

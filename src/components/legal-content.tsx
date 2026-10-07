@@ -49,6 +49,10 @@ const content = {
           "选择直连下载时，你的设备会直接请求来源平台，因此来源平台会收到你的网络地址和浏览器请求信息。本站设置不发送来源页 Referrer，但无法隐藏你的网络地址。",
         ],
         [
+          "问题反馈",
+          "反馈表单保存你主动填写的内容、问题链接及可选联系邮箱，仅供运营者排查和回复。处理完成后个人资料最长保留 180 天，已处理反馈的正文、链接和邮箱不进入新的备份。",
+        ],
+        [
           "投诉信息",
           "投诉只收集处理所需的联系方式、帖子标识和权利说明。处理完成后个人资料保留 180 天；不附带投诉人资料的停止解析标识可长期保留。",
         ],
@@ -103,6 +107,10 @@ const content = {
         [
           "Direct downloads",
           "A direct download contacts the source platform from your device, so it receives your network address and browser request data. We suppress the referring page where possible but cannot hide your network address.",
+        ],
+        [
+          "Feedback",
+          "The feedback form stores the message, problem link, and optional contact email you submit, for operator investigation and replies. Personal details are retained for up to 180 days after resolution; resolved messages, links, and emails are excluded from new backups.",
         ],
         [
           "Copyright reports",

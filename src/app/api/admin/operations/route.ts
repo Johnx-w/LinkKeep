@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getTransientMediaStore } from "@/application/transient-media-store";
 import { requireAdmin } from "@/security/admin-request";
 import { getStore } from "@/storage/server-store";
+import { readLimitedJson, requestErrorResponse } from "@/security/http-request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +30,10 @@ const actionSchema = z.discriminatedUnion("action", [
     complaintId: z.number().int().positive(),
     status: z.enum(["verified", "rejected"]),
   }),
+  z.object({
+    action: z.literal("resolve-feedback"),
+    feedbackId: z.number().int().positive(),
+  }),
 ]);
 
 function unauthorized(error: unknown): Response {
@@ -48,9 +53,11 @@ export async function GET(): Promise<Response> {
       csrf: session.csrf,
       platforms: store.platformStatuses(),
       complaints: store.listOpenComplaints(),
+      feedback: store.listOpenFeedback(),
       blockedPosts: store.blockedPosts(),
       proxyUsage: store.proxyUsage(month),
-    });
+      metrics: store.recentMetrics(),
+    }, { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     return unauthorized(error);
   }
@@ -63,9 +70,10 @@ export async function POST(request: Request): Promise<Response> {
     return unauthorized(error);
   }
 
-  const parsed = actionSchema.safeParse(
-    await request.json().catch(() => null),
-  );
+  let body: unknown;
+  try { body = await readLimitedJson(request, 4096); }
+  catch (error) { return requestErrorResponse(error); }
+  const parsed = actionSchema.safeParse(body);
   if (!parsed.success) {
     return Response.json({ error: "INVALID_REQUEST" }, { status: 400 });
   }
@@ -73,6 +81,11 @@ export async function POST(request: Request): Promise<Response> {
   const store = getStore();
   const action = parsed.data;
   switch (action.action) {
+    case "resolve-feedback":
+      if (!store.resolveFeedback(action.feedbackId)) {
+        return Response.json({ error: "CONTENT_UNAVAILABLE" }, { status: 404 });
+      }
+      break;
     case "set-platform":
       store.setPlatformEnabled(
         action.platform,

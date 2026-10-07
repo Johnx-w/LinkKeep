@@ -22,6 +22,13 @@ declare global {
   var __linkKeepParseServicePromise: Promise<ParseService> | undefined;
 }
 
+// A development hot reload must apply loader and operation changes too.
+// Production keeps its process-wide cache across route module instances.
+if (process.env.NODE_ENV === "development") {
+  globalThis.__linkKeepParseService = undefined;
+  globalThis.__linkKeepParseServicePromise = undefined;
+}
+
 export async function getParseService(): Promise<ParseService> {
   if (globalThis.__linkKeepParseService) {
     return globalThis.__linkKeepParseService;
@@ -31,6 +38,14 @@ export async function getParseService(): Promise<ParseService> {
     if (!env.ENABLE_DOUYIN) store.setPlatformEnabled("douyin", false, "env");
     if (!env.ENABLE_XIAOHONGSHU) {
       store.setPlatformEnabled("xiaohongshu", false, "env");
+    }
+    if (process.env.NODE_ENV === "development") {
+      for (const status of store.platformStatuses()) {
+        const enabled = status.platform === "douyin" ? env.ENABLE_DOUYIN : env.ENABLE_XIAOHONGSHU;
+        if (enabled && !status.enabled && status.disabledReason === "automatic-circuit-breaker") {
+          store.setPlatformEnabled(status.platform, true);
+        }
+      }
     }
 
     const chromiumPath = await resolveChromiumPath();
@@ -46,7 +61,7 @@ export async function getParseService(): Promise<ParseService> {
       isPostBlocked: (platform, postId) =>
         store.isPostBlocked(platform, postId),
       recordPlatformFailure: (platform) =>
-        store.recordPlatformFailure(platform),
+        store.recordPlatformFailure(platform, process.env.NODE_ENV === "development" ? Number.POSITIVE_INFINITY : 5),
       recordPlatformSuccess: (platform) =>
         store.recordPlatformSuccess(platform),
     };

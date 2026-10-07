@@ -21,6 +21,7 @@ interface ParseServiceOptions {
 }
 
 interface RequestContext {
+  signal?: AbortSignal;
   now?: Date;
   requestId: string;
 }
@@ -57,7 +58,7 @@ export class ParseService {
   private readonly timeoutMs: number;
 
   constructor(private readonly options: ParseServiceOptions) {
-    this.timeoutMs = options.timeoutMs ?? 25_000;
+    this.timeoutMs = options.timeoutMs ?? 60_000;
   }
 
   async parse(
@@ -77,7 +78,10 @@ export class ParseService {
     }
 
     const now = context.now ?? new Date();
+    if (context.signal?.aborted) throw new DomainError("PARSE_TIMEOUT");
     const abortController = new AbortController();
+    const relayAbort = () => abortController.abort();
+    context.signal?.addEventListener("abort", relayAbort, { once: true });
     const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
 
     try {
@@ -158,6 +162,7 @@ export class ParseService {
       throw error;
     } finally {
       clearTimeout(timeout);
+      context.signal?.removeEventListener("abort", relayAbort);
     }
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type {
   PublicMediaItem,
@@ -14,13 +14,24 @@ interface ParseResponse {
   requestId: string;
 }
 
+const hydrationSubscribe = () => () => undefined;
+const hydratedSnapshot = () => true;
+const serverSnapshot = () => false;
+
 const errorKey: Record<string, keyof (typeof messages)["zh"]> = {
+  NO_LINK: "noLink",
+  INVALID_ORIGIN: "invalidOrigin",
+  PROXY_CONFIGURATION_REQUIRED: "serviceConfiguration",
   MULTIPLE_LINKS: "multiple",
   UNSUPPORTED_LINK: "unsupported",
   UNSAFE_LINK: "unsupported",
   CONTENT_RESTRICTED: "restricted",
   CONTENT_UNAVAILABLE: "restricted",
   CONTENT_BLOCKED: "restricted",
+  RATE_LIMITED: "retry",
+  SERVICE_BUSY: "retry",
+  MEDIA_TOO_LARGE: "mediaTooLarge",
+  PROXY_BUDGET_EXHAUSTED: "proxyUnavailable",
   PLATFORM_DISABLED: "platformDisabled",
   PARSE_TIMEOUT: "timeout",
   DOWNLOAD_FAILED: "downloadFailed",
@@ -44,6 +55,8 @@ function extensionFor(item: PublicMediaItem): string {
     "image/webp": "webp",
     "image/gif": "gif",
     "image/avif": "avif",
+    "image/heic": "heic",
+    "image/heif": "heif",
     "video/mp4": "mp4",
     "video/webm": "webm",
     "video/quicktime": "mov",
@@ -78,6 +91,12 @@ function MediaThumb({
   locale: Locale;
 }) {
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!failed || attempt >= 2) return;
+    const timer = window.setTimeout(() => { setAttempt((value) => value + 1); setFailed(false); }, 500 * (attempt + 1));
+    return () => window.clearTimeout(timer);
+  }, [failed, attempt]);
   const label =
     item.kind === "image"
       ? locale === "zh"
@@ -96,7 +115,7 @@ function MediaThumb({
         // eslint-disable-next-line @next/next/no-img-element -- same-origin preview proxy; next/image not needed
         <img
           className="media-thumb"
-          src={`/api/media/${encodeURIComponent(item.token)}?mode=preview`}
+          src={`/api/media/${encodeURIComponent(item.token)}?mode=preview&attempt=${attempt}`}
           alt={`${label} #${item.index + 1}`}
           loading="lazy"
           decoding="async"
@@ -121,6 +140,7 @@ function MediaThumb({
 
 export function Downloader({ locale }: { locale: Locale }) {
   const text = messages[locale];
+  const ready = useSyncExternalStore(hydrationSubscribe, hydratedSnapshot, serverSnapshot);
   const [input, setInput] = useState("");
   const [result, setResult] = useState<PublicParseResult | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -216,10 +236,11 @@ export function Downloader({ locale }: { locale: Locale }) {
         return;
       }
       const blob = await response.blob();
+      const actualMime = response.headers.get("content-type")?.split(";")[0];
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = result ? localFilename(result, item) : "media";
+      anchor.download = result ? localFilename(result, { ...item, mimeType: actualMime ?? item.mimeType }) : "media";
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
     } catch {
@@ -269,7 +290,7 @@ export function Downloader({ locale }: { locale: Locale }) {
         if (actualTotal > 800 * 1024 * 1024) {
           throw new Error("MEDIA_TOO_LARGE");
         }
-        zip.file(localFilename(result, item), blob);
+        zip.file(localFilename(result, { ...item, mimeType: response.headers.get("content-type")?.split(";")[0] ?? item.mimeType }), blob);
       }
       const archive = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(archive);
@@ -338,6 +359,7 @@ export function Downloader({ locale }: { locale: Locale }) {
         <div className="parser-card">
           <textarea
             id="share-input"
+            disabled={!ready}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             placeholder={text.inputPlaceholder}
@@ -363,7 +385,7 @@ export function Downloader({ locale }: { locale: Locale }) {
             <button
               className="primary-button"
               type="button"
-              disabled={!input.trim() || status !== "idle"}
+              disabled={!ready || !input.trim() || status !== "idle"}
               onClick={parse}
             >
               {status === "parsing" || status === "slow"

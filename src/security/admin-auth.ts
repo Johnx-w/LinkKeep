@@ -68,8 +68,7 @@ async function verifyRecoveryCode(code: string): Promise<boolean> {
 
   for (const encoded of encodedCodes) {
     if (await verifyPassword(code, encoded)) {
-      store.markRecoveryCodeUsed(fingerprint);
-      return true;
+      return store.consumeRecoveryCode(fingerprint);
     }
   }
   return false;

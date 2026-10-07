@@ -1,0 +1,10 @@
+[Unit]
+Description=Check LinkKeep health, budget, failure rates and backup freshness
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkkeep
+ExecStart=/usr/bin/docker compose exec -T linkkeep node scripts/check-health.mjs
+NoNewPrivileges=true

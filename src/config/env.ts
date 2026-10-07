@@ -1,11 +1,13 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 
 import { z } from "zod";
 
 const schema = z.object({
+  APP_ORIGIN: z.string().url().default("http://localhost:3000"),
   DATABASE_PATH: z.string().default("./data/linkkeep.db"),
-  DAILY_ID_SECRET: z.string().min(16).default("development-daily-secret"),
-  SESSION_SECRET: z.string().min(16).default("development-session-secret"),
+  DAILY_ID_SECRET: z.string().min(16).default(() => randomBytes(32).toString("base64url")),
+  SESSION_SECRET: z.string().min(16).default(() => randomBytes(32).toString("base64url")),
   ADMIN_PASSWORD_HASH: z.string().default(""),
   ADMIN_TOTP_SECRET: z.string().default(""),
   ADMIN_RECOVERY_CODES_HASH: z.string().default("[]"),

@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 
-import { env } from "@/config/env";
 import { CopyrightForm } from "@/components/copyright-form";
+import { env } from "@/config/env";
 import { isLocale } from "@/i18n/messages";
+export const dynamic = "force-dynamic";
 
 export default async function CopyrightPage({
   params,
@@ -21,7 +22,7 @@ export default async function CopyrightPage({
           : "If you are the relevant rights holder or an authorized representative, provide the post ID, a contact email, and your rights statement. Once verified, we will stop parsing that post and clear temporary results without blocking the author's other posts."}
       </p>
       <p>
-        {locale === "zh" ? "也可发送邮件至：" : "You may also email: "}
+        {locale === "zh" ? "也可以邮件联系：" : "You can also contact us by email: "}
         <a href={`mailto:${env.COPYRIGHT_EMAIL}`}>{env.COPYRIGHT_EMAIL}</a>
       </p>
       <CopyrightForm locale={locale} />

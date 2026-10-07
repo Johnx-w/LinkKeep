@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import type { MediaItem } from "@/domain/media";
 import type { SupportedPlatform } from "@/domain/share-input";
+import { DomainError } from "@/domain/errors";
 
 export interface StoredMedia {
   platform: SupportedPlatform;
@@ -15,16 +16,17 @@ export interface StoredMedia {
 export class TransientMediaStore {
   private readonly values = new Map<string, StoredMedia>();
 
-  constructor(private readonly ttlMs = 15 * 60 * 1000) {}
+  constructor(private readonly ttlMs = 15 * 60 * 1000, private readonly capacity = 5000) {}
 
   put(
     value: Omit<StoredMedia, "expiresAt">,
     now = new Date(),
   ): { token: string; expiresAt: string } {
+    this.sweep(now);
+    if (this.values.size >= this.capacity) throw new DomainError("SERVICE_BUSY");
     const token = randomBytes(32).toString("base64url");
     const expiresAt = now.getTime() + this.ttlMs;
     this.values.set(token, { ...value, expiresAt });
-    if (this.values.size > 5_000) this.sweep(now);
     return { token, expiresAt: new Date(expiresAt).toISOString() };
   }
 
@@ -58,6 +60,10 @@ declare global {
 }
 
 export function getTransientMediaStore(): TransientMediaStore {
-  globalThis.__linkKeepMediaStore ??= new TransientMediaStore();
+  if (!globalThis.__linkKeepMediaStore) {
+    globalThis.__linkKeepMediaStore = new TransientMediaStore();
+    const timer = setInterval(() => globalThis.__linkKeepMediaStore?.sweep(), 1000);
+    timer.unref();
+  }
   return globalThis.__linkKeepMediaStore;
 }

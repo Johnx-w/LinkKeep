@@ -23,6 +23,7 @@ export default async function AdminPage() {
     csrf: session.csrf,
     platforms: store.platformStatuses(),
     complaints: store.listOpenComplaints(),
+    feedback: store.listOpenFeedback(),
     blockedPosts: store.blockedPosts(),
     proxyUsage: store.proxyUsage(month),
   };

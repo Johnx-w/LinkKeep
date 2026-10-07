@@ -10,8 +10,14 @@ import {
 export type ResolveHost = (hostname: string) => Promise<string[]>;
 
 const resolveHost: ResolveHost = async (hostname) => {
-  const results = await lookup(hostname, { all: true, verbatim: true });
-  return results.map(({ address }) => address);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const results = await Promise.race([
+      lookup(hostname, { all: true, verbatim: true }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("DNS_TIMEOUT")), 5000); }),
+    ]);
+    return results.map(({ address }) => address);
+  } finally { clearTimeout(timer); }
 };
 
 const mediaHostRoots: Record<SupportedPlatform, readonly string[]> = {
@@ -19,6 +25,9 @@ const mediaHostRoots: Record<SupportedPlatform, readonly string[]> = {
     "douyin.com",
     "iesdouyin.com",
     "douyinvod.com",
+    // Additional host observed in Douyin's public aweme detail URL list.
+    // Keep this specific alias; do not permit arbitrary zjcdn.com hosts.
+    "v5-dy-ov-experiment.zjcdn.com",
     "douyinpic.com",
     "douyinstatic.com",
     "byteimg.com",

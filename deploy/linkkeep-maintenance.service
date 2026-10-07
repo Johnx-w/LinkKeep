@@ -1,0 +1,11 @@
+[Unit]
+Description=LinkKeep retention cleanup and encrypted snapshot
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkkeep
+ExecStart=/usr/bin/docker compose exec -T linkkeep node scripts/maintenance.mjs
+ExecStart=/usr/bin/docker compose exec -T linkkeep node scripts/backup.mjs
+NoNewPrivileges=true

@@ -5,8 +5,13 @@ import {
   readAdminSession,
 } from "@/security/admin-auth";
 import { hashPassword, verifyPassword } from "@/security/password";
+import { SignJWT } from "jose";
 
 describe("运营后台认证", () => {
+  it("公开旧密钥不能签发有效后台会话", async () => {
+    const forged = await new SignJWT({ csrf: "attacker-controlled" }).setProtectedHeader({ alg: "HS256" }).setSubject("linkkeep-operator").setExpirationTime("2h").sign(new TextEncoder().encode("development-session-secret"));
+    await expect(readAdminSession(forged)).resolves.toBeNull();
+  });
   it("scrypt 密码哈希可验证且不包含明文", async () => {
     const encoded = await hashPassword("a-strong-operator-password");
 
@@ -17,6 +22,7 @@ describe("运营后台认证", () => {
     await expect(verifyPassword("wrong-password", encoded)).resolves.toBe(
       false,
     );
+    await expect(verifyPassword("a-strong-operator-password", "base64:" + Buffer.from(encoded).toString("base64"))).resolves.toBe(true);
   });
 
   it("签名会话包含独立 CSRF 令牌", async () => {

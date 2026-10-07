@@ -6,6 +6,7 @@ import {
   rm,
   unlink,
   writeFile,
+  chmod,
 } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -22,21 +23,27 @@ if (key.length !== 32) {
   throw new Error("BACKUP_ENCRYPTION_KEY must be 32 random bytes in base64");
 }
 
-await mkdir(backupDirectory, { recursive: true });
+await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
+await chmod(backupDirectory, 0o700);
 const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
 const snapshotPath = path.join(backupDirectory, `${stamp}.db`);
 const encryptedPath = `${snapshotPath}.aes`;
 
-const database = new DatabaseSync(databasePath, { readOnly: true });
 try {
-  database.exec(
-    `VACUUM INTO '${snapshotPath.replaceAll("'", "''")}'`,
-  );
-} finally {
-  database.close();
-}
-
-try {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    database.exec(`VACUUM INTO '${snapshotPath.replaceAll("'", "''")}'`);
+  } finally { database.close(); }
+  await chmod(snapshotPath, 0o600);
+  // Restore keeps post blocks and open reports. Resolved reporter data is not duplicated into backups.
+  const snapshot = new DatabaseSync(snapshotPath);
+  try {
+    snapshot.exec("PRAGMA journal_mode=DELETE; UPDATE complaint SET contact_email='', statement='' WHERE status <> 'open'; DELETE FROM daily_metric WHERE day < date('now','-30 days');");
+    if (snapshot.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='feedback'").get()) {
+      snapshot.exec("UPDATE feedback SET contact_email='', problem_url='', message='' WHERE status <> 'open';");
+    }
+  } finally { snapshot.close(); }
   const plaintext = await readFile(snapshotPath);
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -51,7 +58,7 @@ try {
     { mode: 0o600 },
   );
 } finally {
-  await unlink(snapshotPath).catch(() => undefined);
+  for (const filename of [snapshotPath, snapshotPath + "-journal", snapshotPath + "-wal", snapshotPath + "-shm"]) await unlink(filename).catch(() => undefined);
 }
 
 const backups = (await readdir(backupDirectory))

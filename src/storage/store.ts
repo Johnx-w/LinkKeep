@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import type { SupportedPlatform } from "@/domain/share-input";
 
@@ -25,6 +26,18 @@ export interface Complaint {
   contactEmail: string;
   statement: string;
   status: "open" | "verified" | "rejected";
+  createdAt: string;
+}
+
+export interface FeedbackInput {
+  message: string;
+  problemUrl: string;
+  contactEmail: string;
+}
+
+export interface Feedback extends FeedbackInput {
+  id: number;
+  status: "open" | "resolved";
   createdAt: string;
 }
 
@@ -61,6 +74,16 @@ CREATE TABLE IF NOT EXISTS blocked_post (
   FOREIGN KEY (complaint_id) REFERENCES complaint(id)
 );
 
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message TEXT NOT NULL,
+  problem_url TEXT NOT NULL DEFAULT '',
+  contact_email TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS proxy_usage (
   month TEXT PRIMARY KEY,
   bytes INTEGER NOT NULL DEFAULT 0,
@@ -81,6 +104,25 @@ CREATE TABLE IF NOT EXISTS admin_recovery_use (
   used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS request_rate (
+  bucket TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS request_lease (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS proxy_reservation (
+  id TEXT PRIMARY KEY,
+  month TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  cost_cents INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
 INSERT OR IGNORE INTO platform_state(platform) VALUES ('douyin');
 INSERT OR IGNORE INTO platform_state(platform) VALUES ('xiaohongshu');
 `;
@@ -97,6 +139,93 @@ export class LinkKeepStore {
 
   close(): void {
     this.database.close();
+  }
+
+  private transaction<T>(operation: () => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try { const result = operation(); this.database.exec("COMMIT"); return result; }
+    catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  consumeRate(namespace: string, owner: string, limits: { hourly: number; daily: number }, now = new Date()): { allowed: boolean; retryAfterSeconds: number } {
+    return this.transaction(() => {
+      const millis = now.getTime();
+      this.database.prepare("DELETE FROM request_rate WHERE expires_at <= ?").run(millis);
+      const hourEnd = Math.floor(millis / 3_600_000) * 3_600_000 + 3_600_000;
+      const dayEnd = Math.floor(millis / 86_400_000) * 86_400_000 + 86_400_000;
+      const buckets = [
+        { key: `${namespace}:h:${hourEnd}:${owner}`, max: limits.hourly, end: hourEnd },
+        { key: `${namespace}:d:${dayEnd}:${owner}`, max: limits.daily, end: dayEnd },
+      ];
+      for (const bucket of buckets) {
+        const row = this.database.prepare("SELECT count FROM request_rate WHERE bucket = ?").get(bucket.key) as { count: number } | undefined;
+        if ((row?.count ?? 0) >= bucket.max) return { allowed: false, retryAfterSeconds: Math.ceil((bucket.end - millis) / 1000) };
+      }
+      for (const bucket of buckets) this.database.prepare("INSERT INTO request_rate(bucket,count,expires_at) VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1").run(bucket.key, bucket.end);
+      return { allowed: true, retryAfterSeconds: 0 };
+    });
+  }
+
+  acquireLease(kind: string, owner: string, globalLimit: number, ownerLimit: number, ttlMs: number, now = Date.now()): string | null {
+    return this.transaction(() => {
+      this.database.prepare("DELETE FROM request_lease WHERE expires_at <= ?").run(now);
+      const counts = this.database.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(owner = ?),0) AS owned FROM request_lease WHERE kind = ?").get(owner, kind) as { total: number; owned: number };
+      if (counts.total >= globalLimit || counts.owned >= ownerLimit) return null;
+      const id = randomUUID();
+      this.database.prepare("INSERT INTO request_lease VALUES (?,?,?,?)").run(id, kind, owner, now + ttlMs);
+      return id;
+    });
+  }
+
+  releaseLease(id: string): void { this.database.prepare("DELETE FROM request_lease WHERE id = ?").run(id); }
+
+  reserveProxyBudget(month: string, maximumBytes: number, costPerGbCents: number, budgetCents: number): { id: string; maxBytes: number } | null {
+    return this.transaction(() => {
+      // A crashed process is charged its reservation rather than granting the same budget again.
+      this.settleExpiredReservations(Date.now());
+      const pending = this.database.prepare("SELECT COALESCE(SUM(cost_cents),0) AS cost FROM proxy_reservation WHERE month = ?").get(month) as { cost: number };
+      const available = budgetCents - this.proxyUsage(month).costCents - pending.cost;
+      if (available <= 0) return null;
+      const maxBytes = Math.min(maximumBytes, Math.floor(available * 1024 ** 3 / costPerGbCents));
+      if (maxBytes < 8192) return null;
+      const cost = Math.ceil(maxBytes / 1024 ** 3 * costPerGbCents);
+      const id = randomUUID();
+      this.database.prepare("INSERT INTO proxy_reservation VALUES (?,?,?,?,?)").run(id, month, maxBytes, cost, Date.now() + 10 * 60 * 1000);
+      return { id, maxBytes };
+    });
+  }
+
+  settleProxyBudget(id: string, bytes: number, costPerGbCents: number): void {
+    this.transaction(() => {
+      const row = this.database.prepare("SELECT month,bytes,cost_cents FROM proxy_reservation WHERE id = ?").get(id) as { month: string; bytes: number; cost_cents: number } | undefined;
+      if (!row) return;
+      const charged = Math.min(bytes, row.bytes);
+      this.addProxyUsage(row.month, charged, Math.min(row.cost_cents, Math.ceil(charged / 1024 ** 3 * costPerGbCents)));
+      this.database.prepare("DELETE FROM proxy_reservation WHERE id = ?").run(id);
+    });
+  }
+
+  private settleExpiredReservations(now: number): void {
+    const rows = this.database.prepare("SELECT id,month,bytes,cost_cents FROM proxy_reservation WHERE expires_at <= ?").all(now) as { id: string; month: string; bytes: number; cost_cents: number }[];
+    for (const row of rows) {
+      this.addProxyUsage(row.month, row.bytes, row.cost_cents);
+      this.database.prepare("DELETE FROM proxy_reservation WHERE id = ?").run(row.id);
+    }
+  }
+
+  prune(now = new Date()): void {
+    this.transaction(() => {
+      this.database.prepare("UPDATE complaint SET contact_email='', statement='' WHERE resolved_at IS NOT NULL AND resolved_at <= datetime(?, '-180 days')").run(now.toISOString());
+      this.database.prepare("UPDATE feedback SET contact_email='', problem_url='', message='' WHERE resolved_at IS NOT NULL AND resolved_at <= datetime(?, '-180 days')").run(now.toISOString());
+      this.database.prepare("DELETE FROM daily_metric WHERE day < date(?, '-30 days')").run(now.toISOString());
+      this.database.prepare("DELETE FROM request_rate WHERE expires_at <= ?").run(now.getTime());
+      this.database.prepare("DELETE FROM request_lease WHERE expires_at <= ?").run(now.getTime());
+      this.settleExpiredReservations(now.getTime());
+    });
+  }
+
+  recentMetrics(): { day: string; platform: string; metric: string; value: number }[] {
+    return this.database.prepare("SELECT day,platform,metric,value FROM daily_metric ORDER BY day DESC,platform,metric").all() as { day: string; platform: string; metric: string; value: number }[];
   }
 
   isPlatformEnabled(platform: SupportedPlatform): boolean {
@@ -247,6 +376,28 @@ export class LinkKeepStore {
     }[];
   }
 
+  createFeedback(input: FeedbackInput): number {
+    const result = this.database.prepare(
+      "INSERT INTO feedback(message, problem_url, contact_email) VALUES (?, ?, ?)",
+    ).run(input.message, input.problemUrl, input.contactEmail);
+    return Number(result.lastInsertRowid);
+  }
+
+  listOpenFeedback(): Feedback[] {
+    return this.database.prepare(
+      `SELECT id, message, problem_url AS problemUrl, contact_email AS contactEmail,
+       status, created_at AS createdAt FROM feedback
+       WHERE status = 'open' ORDER BY created_at ASC, id ASC LIMIT 100`,
+    ).all() as unknown as Feedback[];
+  }
+
+  resolveFeedback(id: number): boolean {
+    const result = this.database.prepare(
+      "UPDATE feedback SET status='resolved', resolved_at=CURRENT_TIMESTAMP WHERE id=? AND status='open'",
+    ).run(id);
+    return Number(result.changes) > 0;
+  }
+
   createComplaint(input: ComplaintInput): number {
     const result = this.database
       .prepare(
@@ -363,5 +514,9 @@ export class LinkKeepStore {
         "INSERT OR IGNORE INTO admin_recovery_use(fingerprint) VALUES (?)",
       )
       .run(fingerprint);
+  }
+
+  consumeRecoveryCode(fingerprint: string): boolean {
+    return this.database.prepare("INSERT OR IGNORE INTO admin_recovery_use(fingerprint) VALUES (?)").run(fingerprint).changes === 1;
   }
 }

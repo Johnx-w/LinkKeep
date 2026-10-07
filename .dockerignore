@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.env
+.env.*
+.private
+.cursor
+.codex
+.agents
+artifacts
+data
+backups
+coverage
+*.db
+*.db-wal
+*.db-shm
+*.log

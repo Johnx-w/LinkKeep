@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { readAdminSession } from "@/security/admin-auth";
+import { requireSameOrigin } from "@/security/http-request";
 
 export async function requireAdmin(
   request?: Request,
@@ -21,5 +22,6 @@ export async function requireAdmin(
   ) {
     throw new Error("INVALID_CSRF");
   }
+  if (requireCsrf && request) requireSameOrigin(request);
   return session;
 }

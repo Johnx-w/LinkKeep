@@ -17,17 +17,14 @@ export function SiteShell({
     <div className="site-shell">
       <header className="site-header">
         <Link className="brand" href={`/${locale}`} aria-label="LinkKeep">
-          <span className="brand-mark" aria-hidden="true">
-            L
-          </span>
-          <span>
-            <strong>LinkKeep</strong>
-            <small>{text.brandSubtitle}</small>
-          </span>
+          LinkKeep
         </Link>
-        <nav aria-label={locale === "zh" ? "网站导航" : "Site navigation"}>
+        <nav className="header-actions" aria-label={locale === "zh" ? "网站导航" : "Site navigation"}>
+          <Link className="feedback-link" href={`/${locale}/feedback`}>
+            {locale === "zh" ? "问题反馈" : "Feedback"}
+          </Link>
           <Link className="language-link" href={`/${alternate}`}>
-            {alternate === "zh" ? "中文" : "English"}
+            {alternate === "zh" ? "中文" : "EN"}
           </Link>
         </nav>
       </header>
@@ -38,6 +35,9 @@ export function SiteShell({
           <Link href={`/${locale}/terms`}>{text.terms}</Link>
           <Link href={`/${locale}/privacy`}>{text.privacy}</Link>
           <Link href={`/${locale}/copyright`}>{text.copyright}</Link>
+          <Link href={`/${locale}/feedback`}>
+            {locale === "zh" ? "问题反馈" : "Feedback"}
+          </Link>
         </nav>
         <p className="non-affiliation">
           {locale === "zh"

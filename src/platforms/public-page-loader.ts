@@ -6,15 +6,18 @@ import type {
   PublicPageLoader,
 } from "@/platforms/public-metadata-adapter";
 import {
-  validatePublicNetworkUrl,
   validatePublicPlatformUrl,
   type ValidatedPlatformUrl,
 } from "@/security/url-guard";
 import { pinnedRequest } from "@/security/pinned-request";
+import { fetchBrowserResource, createBrowserRequestDependencies } from "@/platforms/browser-request";
+import { storeBrowserCookies } from "@/platforms/browser-cookies";
 
 const MAX_REDIRECTS = 5;
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
-const BROWSER_TIMEOUT_MS = 15_000;
+const BROWSER_TIMEOUT_MS = 45_000;
+const DESKTOP_USER_AGENT = `Mozilla/5.0 (${process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64"}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36`;
+const MOBILE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 
 export interface PageResponse {
   status: number;
@@ -52,8 +55,7 @@ const defaultRequester: PageRequester = async (url, addresses, signal) => {
     headers: {
       accept: "text/html,application/xhtml+xml",
       "accept-language": "zh-CN,zh;q=0.9,en;q=0.5",
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      "user-agent": url.hostname.endsWith("xiaohongshu.com") ? MOBILE_USER_AGENT : DESKTOP_USER_AGENT,
     },
   });
 
@@ -71,6 +73,7 @@ const defaultRequester: PageRequester = async (url, addresses, signal) => {
 
 function signalPromise(signal: AbortSignal): Promise<never> {
   return new Promise((_, reject) => {
+    if (signal.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
     signal.addEventListener(
       "abort",
       () => reject(new DOMException("Aborted", "AbortError")),
@@ -87,10 +90,15 @@ export const standardBrowserRenderer: BrowserRenderer = async (
   if (!executablePath) {
     throw new DomainError("PARSE_FAILED", "PARSE_FAILED", true);
   }
-
+  signal.throwIfAborted();
+  const initial = await validatePublicPlatformUrl(url);
+  const requestDependencies = createBrowserRequestDependencies(initial);
+  signal.throwIfAborted();
   const browser = await chromium.launch({
     executablePath,
     headless: true,
+    chromiumSandbox: true,
+    timeout: BROWSER_TIMEOUT_MS,
     args: [
       "--disable-background-networking",
       "--disable-breakpad",
@@ -101,49 +109,73 @@ export const standardBrowserRenderer: BrowserRenderer = async (
       "--no-first-run",
     ],
   });
-
+  const resources = new AbortController();
+  const pendingResources = new Set<() => void>();
+  const wakeResources = () => {
+    for (const resolve of pendingResources) resolve();
+    pendingResources.clear();
+  };
+  const closeOnAbort = () => { resources.abort(); wakeResources(); void browser.close(); };
+  signal.addEventListener("abort", closeOnAbort, { once: true });
   try {
+    signal.throwIfAborted();
     const context = await browser.newContext({
       acceptDownloads: false,
       locale: "zh-CN",
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      userAgent: initial.platform === "xiaohongshu" ? MOBILE_USER_AGENT : DESKTOP_USER_AGENT,
       serviceWorkers: "block",
     });
+    await context.routeWebSocket("**/*", (socket) => socket.close());
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(BROWSER_TIMEOUT_MS);
 
     let capturedAweme: unknown;
 
-    await page.route("**/*", async (route) => {
-      const requestUrl = new URL(route.request().url());
-      if (!["http:", "https:"].includes(requestUrl.protocol)) {
-        await route.abort();
-        return;
+    let remainingBytes = 32 * 1024 * 1024;
+    let requests = 0;
+    let active = 0;
+    await context.route("**/*", async (route) => {
+      const request = route.request();
+      const navigation = request.isNavigationRequest();
+      if (resources.signal.aborted || !["GET", "HEAD"].includes(request.method()) || ["image", "media", "font"].includes(request.resourceType()) || navigation && request.frame() !== page.mainFrame() || ++requests > 300) {
+        await route.abort().catch(() => undefined); return;
       }
+      // Share the actual byte budget across requests. Reserving each resource's
+      // 8 MiB maximum would serialize many small scripts before they are read.
+      while (!resources.signal.aborted && active >= 8) {
+        await new Promise<void>((resolve) => pendingResources.add(resolve));
+      }
+      if (resources.signal.aborted || remainingBytes <= 0) { await route.abort().catch(() => undefined); return; }
+      const allowance = Math.min(8 * 1024 * 1024, remainingBytes);
+      active++;
       try {
-        await validatePublicNetworkUrl(requestUrl);
-        await route.continue();
-      } catch (error) {
-        // Private/internal targets stay blocked; transient DNS failures are allowed
-        // so the page can still finish its own public media bootstrap.
-        if (
-          error instanceof DomainError &&
-          (error.code === "UNSAFE_LINK" || error.code === "UNSUPPORTED_LINK")
-        ) {
-          await route.abort();
-          return;
-        }
-        await route.continue();
-      }
+        const response = await fetchBrowserResource(new URL(request.url()), resources.signal, allowance, navigation, initial.platform, requestDependencies, {
+          headers: await request.allHeaders(),
+          cookiesFor: async (target) => (await context.cookies(target.toString())).map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+          storeCookies: (target, headers) => storeBrowserCookies(context, target, headers),
+          onBytes: (bytes) => {
+            remainingBytes -= bytes;
+            if (remainingBytes < 0) throw new DomainError("MEDIA_TOO_LARGE");
+          },
+        });
+        await route.fulfill(response);
+      } catch { await route.abort().catch(() => undefined); }
+      finally { active--; wakeResources(); }
     });
 
+    const expectedPostId = /\/(?:video|note)\/(\d+)/u.exec(url.pathname)?.[1];
     const detailPromise = page.waitForResponse(
-      (response) =>
-        /\/aweme\/v1\/web\/aweme\/detail\//iu.test(response.url()) &&
-        response.ok(),
-      { timeout: 12_000 },
-    );
+      async (response) => {
+        if (!/\/aweme\/v1\/web\/aweme\/detail\//iu.test(response.url()) || !response.ok()) return false;
+        try {
+          const payload = await response.json() as { aweme_detail?: { aweme_id?: string } };
+          if (!payload.aweme_detail || expectedPostId && String(payload.aweme_detail.aweme_id) !== expectedPostId) return false;
+          capturedAweme = payload.aweme_detail;
+          return true;
+        } catch { return false; }
+      },
+      { timeout: BROWSER_TIMEOUT_MS },
+    ).catch(() => null);
 
     await Promise.race([
       page.goto(
@@ -159,18 +191,10 @@ export const standardBrowserRenderer: BrowserRenderer = async (
     ]);
 
     try {
-      const detailResponse = await Promise.race([
+      await Promise.race([
         detailPromise,
         signalPromise(signal),
       ]);
-      try {
-        const payload = (await detailResponse.json()) as {
-          aweme_detail?: unknown;
-        };
-        if (payload.aweme_detail) capturedAweme = payload.aweme_detail;
-      } catch {
-        // Ignore non-JSON bodies.
-      }
     } catch {
       // Detail endpoint may not appear for every page; continue without capture.
     }
@@ -212,6 +236,9 @@ export const standardBrowserRenderer: BrowserRenderer = async (
       html,
     };
   } finally {
+    signal.removeEventListener("abort", closeOnAbort);
+    resources.abort();
+    wakeResources();
     await browser.close();
   }
 };
@@ -234,6 +261,16 @@ export function createPublicPageLoader(options?: {
       initialPlatform ??= validated.platform;
       if (validated.platform !== initialPlatform) {
         throw new DomainError("UNSAFE_LINK");
+      }
+
+      // Douyin posts require the browser detail response. Loading the same SPA
+      // once through HTTP first can spend the parse deadline on unused HTML.
+      if (browserRenderer && validated.platform === "douyin" && /^\/(?:video|note)\/\d+\/?$/u.test(validated.url.pathname)) {
+        const rendered = await browserRenderer(validated.url, signal);
+        const finalValidated = await validate(rendered.finalUrl);
+        if (finalValidated.platform !== initialPlatform) throw new DomainError("UNSAFE_LINK");
+        if (/^\/(?:login|signin)(?:\/|$)/iu.test(finalValidated.url.pathname)) throw new DomainError("CONTENT_RESTRICTED");
+        return rendered;
       }
 
       const response = await requester(
@@ -270,6 +307,7 @@ export function createPublicPageLoader(options?: {
         finalUrl: validated.url.toString(),
         html: response.body,
       };
+      if (/^\/(?:login|signin)(?:\/|$)/iu.test(validated.url.pathname)) throw new DomainError("CONTENT_RESTRICTED");
       const needsBrowser =
         Boolean(browserRenderer) &&
         (validated.platform === "douyin" ||

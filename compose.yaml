@@ -1,9 +1,20 @@
 services:
   linkkeep:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${LINKKEEP_NODE_IMAGE:-node:24-bookworm-slim}
     restart: unless-stopped
+    init: true
     env_file:
-      - .env
+      - ${LINKKEEP_ENV_FILE:-.env}
+    environment:
+      DATABASE_PATH: /app/data/linkkeep.db
+      BACKUP_DIRECTORY: /app/backups
+      PLAYWRIGHT_EXECUTABLE_PATH: /usr/bin/chromium
+      HOME: /tmp
+      XDG_CONFIG_HOME: /tmp/chromium-config
+      XDG_CACHE_HOME: /tmp/chromium-cache
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -16,17 +27,23 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+      - seccomp=./deploy/chromium-seccomp.json
     pids_limit: 256
     mem_limit: 1g
     cpus: 1.5
     shm_size: 256m
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/zh').then(r=>{if(!r.ok)process.exit(1)})",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s

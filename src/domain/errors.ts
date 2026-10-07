@@ -9,6 +9,7 @@ export type DomainErrorCode =
   | "CONTENT_BLOCKED"
   | "PARSE_TIMEOUT"
   | "PARSE_FAILED"
+  | "SERVICE_BUSY"
   | "UNSAFE_MEDIA"
   | "MEDIA_TOO_LARGE"
   | "PROXY_BUDGET_EXHAUSTED";

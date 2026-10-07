@@ -13,6 +13,31 @@ const context = {
 };
 
 describe("公开元数据平台适配器", () => {
+  it("读取小红书手机分享页中的新 SSR 数据", async () => {
+    const noteId = "65aabbccddeeff0011223344";
+    const state = { LAUNCHER_SSR_STORE_PAGE_DATA: { noteData: {
+      noteId, type: "video", title: "undefined; 清晰度", user: { nickname: "作者" },
+      video: { media: { stream: {
+        h264: [{ width: 1920, height: 1080, masterUrl: "https://sns-video.xhscdn.com/1080.mp4" }],
+        h265: [{ width: 3840, height: 2160, masterUrl: "https://sns-video.xhscdn.com/2160.mp4" }],
+      } } },
+    } } };
+    const adapter = new XiaohongshuPublicAdapter(async () => ({ finalUrl: `https://www.xiaohongshu.com/discovery/item/${noteId}`, html: `<script>window.__SETUP_SERVER_STATE__=${JSON.stringify(state)};</script>` }));
+    const entry = await adapter.parse(new URL(`https://www.xiaohongshu.com/explore/${noteId}`), context);
+    expect(entry.title).toBe("undefined; 清晰度");
+    expect(entry.media[0].source).toMatchObject({ url: "https://sns-video.xhscdn.com/2160.mp4", width: 3840, height: 2160, codec: "h265" });
+  });
+  it("抖音默认播放地址比码率列表更高清时选择默认地址，且不会返回推荐帖", async () => {
+    const postId = "7450000000000000000";
+    const aweme = { aweme_id: postId, video: {
+      play_addr: { width: 3840, height: 2160, url_list: ["https://v.douyinvod.com/2160.mp4"] },
+      bit_rate: [{ play_addr: { width: 1920, height: 1080, url_list: ["https://v.douyinvod.com/1080.mp4"] } }],
+    } };
+    const state = { loaderData: { detail: aweme, recommendations: [{ aweme_id: "other-post", video: { play_addr: { width: 7680, height: 4320, url_list: ["https://v.douyinvod.com/wrong.mp4"] } } }] } };
+    const adapter = new DouyinPublicAdapter(async () => ({ finalUrl: `https://www.douyin.com/video/${postId}`, html: `<script>window._ROUTER_DATA=${JSON.stringify(state)};</script>` }));
+    const entry = await adapter.parse(new URL(`https://www.douyin.com/video/${postId}`), context);
+    expect(entry.media[0].source).toMatchObject({ url: "https://v.douyinvod.com/2160.mp4", width: 3840, height: 2160 });
+  });
   it("从抖音公开页面 Open Graph 元数据解析视频", async () => {
     const loader: PublicPageLoader = async () => ({
       finalUrl: "https://www.douyin.com/video/7450000000000000000",
